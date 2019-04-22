@@ -1,0 +1,123 @@
+version: '3.6'
+
+services:
+
+  postgres:
+    build: ./postgres
+    image: postgres:11.2-custom
+    container_name: postgres
+    restart: on-failure
+    environment:
+      POSTGRES_DB: "postgres"
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "123456"
+    labels:
+      - traefik.enable=true
+      # - traefik.port=5432
+    networks: 
+      - backend
+    volumes: 
+      # - /etc/localtime:/etc/localtime:ro
+      - mx-vol-postgres:/var/lib/postgresql/data
+
+  nats:
+    image: nats-streaming:0.14.0
+    container_name: nats
+    restart: on-failure
+    labels:
+      - traefik.enable=true
+      # - traefik.port=4222 # client
+      # - traefik.port=6222 # cluster
+      # - traefik.port=8222 # mgmt
+    networks: 
+      - backend
+    # volumes: 
+    #   - /etc/localtime:/etc/localtime:ro
+
+  elasticsearch:
+    image: elasticsearch:7.0.0
+    container_name: elasticsearch
+    restart: "no"
+    labels:
+      - traefik.enable=true
+      # - traefik.port=9200 # client
+      # - traefik.port=9300 # cluster
+    networks: 
+      - backend
+    # volumes: 
+    #   - /etc/localtime:/etc/localtime:ro
+    environment: 
+      - discovery.type=single-node
+
+  meow:
+    build: .
+    command: meow-service
+    depends_on: 
+      - postgres
+      - nats
+    ports:
+      - "8080"
+    environment:
+      POSTGRES_DB: "postgres"
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "123456"
+      NATS_ADDRESS: "nats:4222"
+    labels:
+      - traefik.enable=true
+    networks: 
+      - backend
+
+  query:
+    build: "."
+    command: "query-service"
+    depends_on:
+      - "elasticsearch"
+      - "nats"
+      - "postgres"
+    ports:
+      - "8080"
+    environment:
+      POSTGRES_DB: "postgres"
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "123456"
+      NATS_ADDRESS: "nats:4222"
+      ELASTICSEARCH_ADDRESS: "elasticsearch:9200"
+    networks: 
+      - backend
+    labels:
+      - traefik.enable=true
+
+  pusher:
+    build: "."
+    command: "pusher-service"
+    depends_on:
+      - "nats"
+    ports:
+      - "8080"
+    environment:
+      NATS_ADDRESS: "nats:4222"
+    networks: 
+      - backend
+    labels:
+      - traefik.enable=true
+
+  nginx:
+    build: ./nginx
+    ports:
+      - "6969:80"
+    depends_on:
+      - meow
+      - query
+      - pusher
+    networks: 
+      - backend
+    labels:
+      - traefik.enable=true
+
+networks: 
+  backend:
+    external: true
+
+volumes: 
+  mx-vol-postgres:
+    external: true
